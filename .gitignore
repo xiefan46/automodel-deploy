@@ -1,0 +1,11 @@
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+__pycache__/
+*.pyc
+
+# 本地缓存目录(脚本生成,不进 git)
+automodel_cache/
+*.tar.zst
