@@ -54,7 +54,14 @@ installed() { "$PY" -c "import $1" 2>/dev/null; }
 #   - cuda-toolkit-13-0 (~4 GB): 提供 nvcc,编译 mamba/conv1d/TE 时需要 — 仅 rebuild
 
 ensure_nvidia_cuda_repo() {
+    # 优先级 1: 已经有 cuda*.list 文件(镜像自带或之前装过)
+    if ls /etc/apt/sources.list.d/cuda*.list >/dev/null 2>&1; then
+        log "NVIDIA CUDA repo 已配置(/etc/apt/sources.list.d/cuda*.list)"
+        return
+    fi
+    # 优先级 2: apt-cache 能查到 nvidia.com 源(老式 sources.list 入口)
     if apt-cache policy 2>/dev/null | grep -q "developer.download.nvidia.com/compute/cuda"; then
+        log "NVIDIA CUDA repo 已在 apt 中"
         return
     fi
     log "添加 NVIDIA CUDA apt repo..."
@@ -99,6 +106,23 @@ ensure_cuda_compat() {
 ensure_cuda_toolkit() {
     local MM="$1"
     local DOT="${MM/-/.}"
+    local REQ_MAJOR="${DOT%%.*}"
+
+    # 优先级 1: 系统 PATH 里已有 nvcc(镜像自带)
+    if command -v nvcc >/dev/null 2>&1; then
+        local NVCC_VER
+        NVCC_VER=$(nvcc --version 2>/dev/null | grep -oP "release \K[0-9]+\.[0-9]+" | head -1)
+        local NVCC_MAJOR="${NVCC_VER%%.*}"
+        if [ -n "$NVCC_VER" ] && [ "$NVCC_MAJOR" -ge "$REQ_MAJOR" ]; then
+            log "系统已有 nvcc CUDA ${NVCC_VER},跳过 toolkit 安装"
+            local NVCC_BIN
+            NVCC_BIN=$(command -v nvcc)
+            export CUDA_HOME="$(dirname "$(dirname "$NVCC_BIN")")"
+            return
+        fi
+    fi
+
+    # 优先级 2: 指定版本 toolkit 装在标准路径
     if [ -x "/usr/local/cuda-${DOT}/bin/nvcc" ]; then
         log "CUDA ${DOT} toolkit 已装"
     else

@@ -75,8 +75,9 @@ ensure_cuda_compat_for_venv() {
         log "${PKG} 已装"
     else
         log "装 ${PKG}(~30 MB,让 cu${CUDA_RUNTIME_VER}.x driver 跑 cu${REQUIRED_CUDA_MAJOR}.0 程序)..."
-        # 加 NVIDIA repo
-        if ! apt-cache policy 2>/dev/null | grep -q "developer.download.nvidia.com/compute/cuda"; then
+        # 加 NVIDIA repo(如果还没有)
+        if ! ls /etc/apt/sources.list.d/cuda*.list >/dev/null 2>&1 && \
+           ! apt-cache policy 2>/dev/null | grep -q "developer.download.nvidia.com/compute/cuda"; then
             . /etc/os-release
             local DISTRO="${ID}${VERSION_ID//./}"
             local DEB_ARCH ARCH
