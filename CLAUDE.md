@@ -28,13 +28,12 @@ automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml
 
 ### B. 首次 pod + 想种 HF cache(下次开 pod 才能秒拉)
 
-先 export HF token + 进 tmux:
+进 tmux:
 ```bash
-export HF_TOKEN=hf_xxxxxxxxx
 tmux new -s auto
 ```
 
-在 tmux 里跑:
+在 tmux 里跑(脚本会交互式问 HF token,粘贴你的 [Write token](https://huggingface.co/settings/tokens)):
 ```bash
 git clone https://github.com/xiefan46/Automodel.git /root/Automodel && \
 git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && \
@@ -49,10 +48,10 @@ automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml
 ### C. 后续 pod(HF cache 已存在,2-5 min 拉缓存)
 
 ```bash
-export HF_TOKEN=hf_xxxxxxxxx
 tmux new -s auto
 ```
 
+脚本会交互式问 HF token(从 cache 拉也要 read 权限):
 ```bash
 git clone https://github.com/xiefan46/Automodel.git /root/Automodel && \
 git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && \
