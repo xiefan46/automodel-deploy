@@ -25,24 +25,41 @@ RunPod 一键部署 [NVIDIA-NeMo/Automodel](https://github.com/NVIDIA-NeMo/Autom
 
 ## 快速开始
 
-> **所有命令包在 `tmux` 里 — SSH 断了训练不停。末尾 `; bash` 让 tmux 在训练完后保留 shell。**
-> **`Ctrl-b d` 脱离 tmux,`tmux attach -t auto` 重新进。**
+> 训练都跑在 `tmux` 里 — SSH 断了不停。`Ctrl-b d` 脱离,`tmux attach -t auto` 回去。
 
 ### Qwen2.5-7B PEFT(1× H100 80GB,推荐首跑)
 
-最快从零到看 loss(~30 min,首次):
-
+进 tmux:
 ```bash
-tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && SKIP_HF_UPLOAD=1 EXTRAS= bash /root/automodel-deploy/rebuild_env.sh && source /root/Automodel/.venv/bin/activate && cd /root/Automodel && automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml; bash"
+tmux new -s auto
 ```
 
-`SKIP_HF_UPLOAD=1` 不推 HF cache;`EXTRAS=` 跳过 TE/flash-attn 编译。
+在 tmux 里跑:
+```bash
+git clone https://github.com/xiefan46/Automodel.git /root/Automodel && \
+git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && \
+SKIP_HF_UPLOAD=1 EXTRAS= bash /root/automodel-deploy/rebuild_env.sh && \
+source /root/Automodel/.venv/bin/activate && \
+cd /root/Automodel && \
+automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml
+```
+
+`SKIP_HF_UPLOAD=1` 不推 HF cache;`EXTRAS=` 跳过 TE/flash-attn 编译 → 总 ~30 min 见 loss。
 
 ### 首次 + 想种 HF cache(下次开 pod 才能秒拉)
 
 ```bash
 export HF_TOKEN=hf_xxxxxxxxx
-tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && bash /root/automodel-deploy/rebuild_env.sh && source /root/Automodel/.venv/bin/activate && cd /root/Automodel && automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml; bash"
+tmux new -s auto
+```
+
+```bash
+git clone https://github.com/xiefan46/Automodel.git /root/Automodel && \
+git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && \
+bash /root/automodel-deploy/rebuild_env.sh && \
+source /root/Automodel/.venv/bin/activate && \
+cd /root/Automodel && \
+automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml
 ```
 
 含 `--extra all`(装 TE + flash-attn)+ 推 HF Hub。首次 ~25 min setup + 训练。
@@ -51,13 +68,29 @@ tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Auto
 
 ```bash
 export HF_TOKEN=hf_xxxxxxxxx
-tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && bash /root/automodel-deploy/setup_env.sh && source /root/Automodel/.venv/bin/activate && cd /root/Automodel && automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml; bash"
+tmux new -s auto
+```
+
+```bash
+git clone https://github.com/xiefan46/Automodel.git /root/Automodel && \
+git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && \
+bash /root/automodel-deploy/setup_env.sh && \
+source /root/Automodel/.venv/bin/activate && \
+cd /root/Automodel && \
+automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml
 ```
 
 ### Hello World(Gemma-3-270m,任何 GPU,~10 min)
 
 ```bash
-tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && SKIP_HF_UPLOAD=1 EXTRAS= bash /root/automodel-deploy/rebuild_env.sh && bash /root/automodel-deploy/run_hello_world.sh; bash"
+tmux new -s auto
+```
+
+```bash
+git clone https://github.com/xiefan46/Automodel.git /root/Automodel && \
+git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && \
+SKIP_HF_UPLOAD=1 EXTRAS= bash /root/automodel-deploy/rebuild_env.sh && \
+bash /root/automodel-deploy/run_hello_world.sh
 ```
 
 ### 换 recipe(只改最后一段)
