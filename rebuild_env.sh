@@ -45,13 +45,43 @@ PY="${VENV_DIR}/bin/python"
 [ -f "${AUTOMODEL_ROOT}/pyproject.toml" ] || err "${AUTOMODEL_ROOT}/pyproject.toml 不存在"
 [ -f "${AUTOMODEL_ROOT}/uv.lock" ] || err "${AUTOMODEL_ROOT}/uv.lock 不存在 (Automodel 用 uv,要锁文件)"
 
+# ─── CUDA 版本前置检查 ───
+# Automodel 的 pyproject.toml 把 torch 锁死在 pytorch-cu130 index (CUDA 13.0)。
+# 如果你 RunPod pod 的 driver 不支持 13.0,后面 uv sync 装的 torch 跑不动 GPU,
+# 而且 --extra all 触发的 causal-conv1d / mamba-ssm 源码编译会撞 mismatch 直接挂。
+# 早早 fail,别浪费 20 分钟。
+if command -v nvidia-smi >/dev/null 2>&1; then
+    CUDA_DRIVER_VER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1 | cut -d. -f1)
+    CUDA_RUNTIME_VER=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 >/dev/null && \
+                       nvidia-smi 2>/dev/null | grep -oP "CUDA Version: \K[0-9]+\.[0-9]+" | cut -d. -f1)
+    REQUIRED_CUDA_MAJOR=$(grep -oP "pytorch-cu\K[0-9]+" "${AUTOMODEL_ROOT}/pyproject.toml" | sort -u | tail -1 | cut -c1-2)
+    if [ -n "${CUDA_RUNTIME_VER:-}" ] && [ -n "${REQUIRED_CUDA_MAJOR:-}" ]; then
+        if [ "$CUDA_RUNTIME_VER" -lt "$REQUIRED_CUDA_MAJOR" ]; then
+            warn "CUDA 版本检查失败:"
+            warn "  你的 driver 支持 CUDA ${CUDA_RUNTIME_VER}.x (driver ${CUDA_DRIVER_VER})"
+            warn "  Automodel 锁定 PyTorch cu${REQUIRED_CUDA_MAJOR}0+ (CUDA ${REQUIRED_CUDA_MAJOR}.0+)"
+            warn ""
+            warn "解决办法(任选其一):"
+            warn "  1) 换 RunPod 镜像到 CUDA ${REQUIRED_CUDA_MAJOR}.0+,比如:"
+            warn "     runpod/pytorch:2.10.0-py3.12-cuda13.0.0-cudnn-devel-ubuntu24.04"
+            warn "     nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04"
+            warn "  2) ALLOW_CUDA_MISMATCH=1 bash rebuild_env.sh 强制继续 (训练 99% 会失败)"
+            if [ "${ALLOW_CUDA_MISMATCH:-}" != "1" ]; then
+                err "中止以免浪费 20 分钟编译。设 ALLOW_CUDA_MISMATCH=1 跳过本检查"
+            fi
+        else
+            log "CUDA 版本 OK: driver 支持 CUDA ${CUDA_RUNTIME_VER}.x, Automodel 要 cu${REQUIRED_CUDA_MAJOR}0+"
+        fi
+    fi
+fi
+
 installed() { "$PY" -c "import $1" 2>/dev/null; }
 
 # ─── HF helpers ───
 ensure_hf_cli() {
     command -v hf >/dev/null 2>&1 && return
     log "安装 HF CLI..."
-    pip3 install -qU "huggingface_hub[cli]" hf_transfer
+    pip3 install -qU huggingface_hub hf_transfer
     command -v hf >/dev/null 2>&1 || err "hf CLI 安装失败"
 }
 

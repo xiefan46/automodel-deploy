@@ -66,8 +66,8 @@ ensure_hf_cli() {
     command -v hf >/dev/null 2>&1 && return
     log "安装 HF CLI..."
     # 用 uv 装到一个独立工具环境,不污染系统 python
-    uv tool install "huggingface_hub[cli,hf_transfer]" 2>/dev/null \
-        || pip3 install -qU "huggingface_hub[cli]" hf_transfer
+    uv tool install "huggingface_hub[hf_transfer]" 2>/dev/null \
+        || pip3 install -qU huggingface_hub hf_transfer
     command -v hf >/dev/null 2>&1 || err "hf CLI 安装失败"
 }
 
