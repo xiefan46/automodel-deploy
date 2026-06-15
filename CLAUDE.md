@@ -2,6 +2,59 @@
 
 RunPod 一键部署 NVIDIA-NeMo/Automodel 训练环境的脚本集合。
 
+## 一键复制粘贴(常用场景)
+
+> 所有命令都包在 `tmux` 里 — SSH 断了训练不停。`; bash` 让 tmux 在训练完后保留 shell,方便事后看结果。
+> 中途按 `Ctrl-b d` 脱离 tmux,`tmux attach -t auto` 重新进。
+
+### A. 首次 pod,跑 Qwen2.5-7B PEFT(最常用 — 最快从零到训练)
+
+```bash
+tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && SKIP_HF_UPLOAD=1 EXTRAS= bash /root/automodel-deploy/rebuild_env.sh && source /root/Automodel/.venv/bin/activate && cd /root/Automodel && automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml; bash"
+```
+
+`SKIP_HF_UPLOAD=1` 不推 HF cache,`EXTRAS=` 跳过 TE/flash-attn 编译 → 总耗时 ~5 min setup + ~20 min 训练 = **30 min 内见 loss**。
+
+### B. 首次 pod + 想种 HF cache(下次开 pod 才能秒拉)
+
+```bash
+export HF_TOKEN=hf_xxxxxxxxx   # 先 export 你的 HF write token,避免 tmux 内部交互
+tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && bash /root/automodel-deploy/rebuild_env.sh && source /root/Automodel/.venv/bin/activate && cd /root/Automodel && automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml; bash"
+```
+
+包含 `--extra all`(装 TE + flash-attn)+ 推 HF Hub。**首次 ~25 min setup + 训练**。
+
+### C. 后续 pod(HF cache 已存在,2-5 min 拉缓存)
+
+```bash
+export HF_TOKEN=hf_xxxxxxxxx
+tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && bash /root/automodel-deploy/setup_env.sh && source /root/Automodel/.venv/bin/activate && cd /root/Automodel && automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml; bash"
+```
+
+### D. Hello world(Gemma-3-270m,任何 GPU 都行)
+
+```bash
+tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && SKIP_HF_UPLOAD=1 EXTRAS= bash /root/automodel-deploy/rebuild_env.sh && bash /root/automodel-deploy/run_hello_world.sh; bash"
+```
+
+### 换 recipe 只改最后一段
+
+把 `automodel examples/...yaml` 替换成想跑的 yaml,或加参数:
+```bash
+automodel examples/llm_finetune/qwen/qwen3_0p6b_hellaswag.yaml             # 小模型快测
+automodel examples/llm_finetune/llama3_2/llama3_2_1b_squad.yaml            # Llama (需 HF login + 同意 license)
+automodel examples/llm_finetune/llama3_2/llama3_2_1b_squad.yaml --nproc-per-node 8   # 多卡
+automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml --step_scheduler.max_steps 20  # 冒烟模式
+```
+
+### 监控
+
+新开 SSH 窗口(或 tmux 分屏 `Ctrl-b "`):
+```bash
+watch -n 1 nvidia-smi             # GPU 占用
+tmux attach -t auto                # 看训练日志
+```
+
 ## 脚本
 
 | 脚本 | 用途 |

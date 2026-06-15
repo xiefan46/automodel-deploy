@@ -25,36 +25,55 @@ RunPod 一键部署 [NVIDIA-NeMo/Automodel](https://github.com/NVIDIA-NeMo/Autom
 
 ## 快速开始
 
-### Hello World（单卡，Gemma-3-270m SFT — 无 HF gating）
+> **所有命令包在 `tmux` 里 — SSH 断了训练不停。末尾 `; bash` 让 tmux 在训练完后保留 shell。**
+> **`Ctrl-b d` 脱离 tmux,`tmux attach -t auto` 重新进。**
+
+### Qwen2.5-7B PEFT(1× H100 80GB,推荐首跑)
+
+最快从零到看 loss(~30 min,首次):
 
 ```bash
-# 1. 克隆代码（fork 用,你的)
-git clone https://github.com/xiefan46/Automodel.git /root/Automodel
-git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy
-
-# 2. setup 环境（首次 ~5 min,重入 ~5s）
-bash /root/automodel-deploy/setup_env.sh
-
-# 3. 跑 hello-world
-tmux new -s automodel
-bash /root/automodel-deploy/run_hello_world.sh
+tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && SKIP_HF_UPLOAD=1 EXTRAS= bash /root/automodel-deploy/rebuild_env.sh && source /root/Automodel/.venv/bin/activate && cd /root/Automodel && automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml; bash"
 ```
 
-### 跑别的 recipe
+`SKIP_HF_UPLOAD=1` 不推 HF cache;`EXTRAS=` 跳过 TE/flash-attn 编译。
+
+### 首次 + 想种 HF cache(下次开 pod 才能秒拉)
 
 ```bash
-cd /root/Automodel
-source .venv/bin/activate
+export HF_TOKEN=hf_xxxxxxxxx
+tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && bash /root/automodel-deploy/rebuild_env.sh && source /root/Automodel/.venv/bin/activate && cd /root/Automodel && automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml; bash"
+```
 
-# 单卡:Qwen3-0.6B HellaSwag
+含 `--extra all`(装 TE + flash-attn)+ 推 HF Hub。首次 ~25 min setup + 训练。
+
+### 后续 pod(HF cache 已存在,2-5 min 拉缓存)
+
+```bash
+export HF_TOKEN=hf_xxxxxxxxx
+tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && bash /root/automodel-deploy/setup_env.sh && source /root/Automodel/.venv/bin/activate && cd /root/Automodel && automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml; bash"
+```
+
+### Hello World(Gemma-3-270m,任何 GPU,~10 min)
+
+```bash
+tmux new -s auto "git clone https://github.com/xiefan46/Automodel.git /root/Automodel && git clone https://github.com/xiefan46/automodel-deploy.git /root/automodel-deploy && SKIP_HF_UPLOAD=1 EXTRAS= bash /root/automodel-deploy/rebuild_env.sh && bash /root/automodel-deploy/run_hello_world.sh; bash"
+```
+
+### 换 recipe(只改最后一段)
+
+```bash
+# 小模型快测
 automodel examples/llm_finetune/qwen/qwen3_0p6b_hellaswag.yaml
 
-# 8 卡:Llama-3.2-1B SQuAD（需要 HF 登录 + 同意 Llama license）
-huggingface-cli login   # 一次性
+# Llama-1B(需 HF login + 同意 Llama license)
 automodel examples/llm_finetune/llama3_2/llama3_2_1b_squad.yaml --nproc-per-node 8
 
-# LoRA:省显存
+# LoRA 省显存
 automodel examples/llm_finetune/llama3_2/llama3_2_1b_hellaswag_peft.yaml
+
+# 冒烟模式(20 步停)
+automodel examples/llm_finetune/qwen/qwen2_5_7b_squad_peft.yaml --step_scheduler.max_steps 20
 ```
 
 ### 推荐的 hello-world 模型(按门槛由低到高)
