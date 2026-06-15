@@ -49,6 +49,64 @@ if [ -n "$NEED_PKGS" ]; then
     apt-get install -y ${NEED_PKGS} 2>/dev/null || { apt-get update && apt-get install -y ${NEED_PKGS}; }
 fi
 
+# ─── CUDA forward-compat 自动安装 ───
+# 缓存里的 venv 装了 cu130 PyTorch。如果当前 pod driver 不到 cu13,
+# 装 cuda-compat-13-0(~30 MB)让 driver 兼容,否则 torch 起不来 GPU。
+ensure_cuda_compat_for_venv() {
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        return
+    fi
+    local CUDA_RUNTIME_VER
+    CUDA_RUNTIME_VER=$(nvidia-smi 2>/dev/null | grep -oP "CUDA Version: \K[0-9]+\.[0-9]+" | cut -d. -f1)
+    [ -z "$CUDA_RUNTIME_VER" ] && return
+
+    local REQUIRED_CUDA_MAJOR
+    REQUIRED_CUDA_MAJOR=$(grep -oP "pytorch-cu\K[0-9]+" "${AUTOMODEL_ROOT}/pyproject.toml" | sort -u | tail -1 | cut -c1-2)
+    [ -z "$REQUIRED_CUDA_MAJOR" ] && return
+
+    if [ "$CUDA_RUNTIME_VER" -ge "$REQUIRED_CUDA_MAJOR" ]; then
+        log "driver 已支持 cu${REQUIRED_CUDA_MAJOR}.x,不需要 compat"
+        return
+    fi
+
+    local MM="${REQUIRED_CUDA_MAJOR:0:2}-0"
+    local PKG="cuda-compat-${MM}"
+    if dpkg -s "$PKG" >/dev/null 2>&1; then
+        log "${PKG} 已装"
+    else
+        log "装 ${PKG}(~30 MB,让 cu${CUDA_RUNTIME_VER}.x driver 跑 cu${REQUIRED_CUDA_MAJOR}.0 程序)..."
+        # 加 NVIDIA repo
+        if ! apt-cache policy 2>/dev/null | grep -q "developer.download.nvidia.com/compute/cuda"; then
+            . /etc/os-release
+            local DISTRO="${ID}${VERSION_ID//./}"
+            local DEB_ARCH ARCH
+            DEB_ARCH=$(dpkg --print-architecture)
+            case "$DEB_ARCH" in
+                amd64) ARCH="x86_64" ;;
+                arm64) ARCH="sbsa" ;;
+                *) err "未支持的架构: $DEB_ARCH" ;;
+            esac
+            wget -q "https://developer.download.nvidia.com/compute/cuda/repos/${DISTRO}/${ARCH}/cuda-keyring_1.1-1_all.deb" -O /tmp/cuda-keyring.deb \
+                || err "下载 cuda-keyring 失败"
+            dpkg -i /tmp/cuda-keyring.deb >/dev/null
+            apt-get update -qq
+            rm -f /tmp/cuda-keyring.deb
+        fi
+        apt-get install -y "$PKG" >/dev/null
+    fi
+
+    local DOT="${MM/-/.}"
+    local COMPAT_DIR="/usr/local/cuda-${DOT}/compat"
+    if [ -d "$COMPAT_DIR" ]; then
+        export LD_LIBRARY_PATH="${COMPAT_DIR}:${LD_LIBRARY_PATH:-}"
+        if ! grep -q "cuda-${DOT}/compat" ~/.bashrc 2>/dev/null; then
+            echo "export LD_LIBRARY_PATH=${COMPAT_DIR}:\$LD_LIBRARY_PATH" >> ~/.bashrc
+        fi
+    fi
+}
+
+ensure_cuda_compat_for_venv
+
 # ─── 装 uv(Automodel 强制要求,不要用 pip)───
 if ! command -v uv &>/dev/null; then
     log "安装 uv..."

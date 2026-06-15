@@ -45,37 +45,95 @@ PY="${VENV_DIR}/bin/python"
 [ -f "${AUTOMODEL_ROOT}/pyproject.toml" ] || err "${AUTOMODEL_ROOT}/pyproject.toml 不存在"
 [ -f "${AUTOMODEL_ROOT}/uv.lock" ] || err "${AUTOMODEL_ROOT}/uv.lock 不存在 (Automodel 用 uv,要锁文件)"
 
-# ─── CUDA 版本前置检查 ───
-# Automodel 的 pyproject.toml 把 torch 锁死在 pytorch-cu130 index (CUDA 13.0)。
-# 如果你 RunPod pod 的 driver 不支持 13.0,后面 uv sync 装的 torch 跑不动 GPU,
-# 而且 --extra all 触发的 causal-conv1d / mamba-ssm 源码编译会撞 mismatch 直接挂。
-# 早早 fail,别浪费 20 分钟。
-if command -v nvidia-smi >/dev/null 2>&1; then
-    CUDA_DRIVER_VER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1 | cut -d. -f1)
-    CUDA_RUNTIME_VER=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 >/dev/null && \
-                       nvidia-smi 2>/dev/null | grep -oP "CUDA Version: \K[0-9]+\.[0-9]+" | cut -d. -f1)
-    REQUIRED_CUDA_MAJOR=$(grep -oP "pytorch-cu\K[0-9]+" "${AUTOMODEL_ROOT}/pyproject.toml" | sort -u | tail -1 | cut -c1-2)
-    if [ -n "${CUDA_RUNTIME_VER:-}" ] && [ -n "${REQUIRED_CUDA_MAJOR:-}" ]; then
-        if [ "$CUDA_RUNTIME_VER" -lt "$REQUIRED_CUDA_MAJOR" ]; then
-            warn "CUDA 版本检查失败:"
-            warn "  你的 driver 支持 CUDA ${CUDA_RUNTIME_VER}.x (driver ${CUDA_DRIVER_VER})"
-            warn "  Automodel 锁定 PyTorch cu${REQUIRED_CUDA_MAJOR}0+ (CUDA ${REQUIRED_CUDA_MAJOR}.0+)"
-            warn ""
-            warn "解决办法(任选其一):"
-            warn "  1) 换 RunPod 镜像到 CUDA ${REQUIRED_CUDA_MAJOR}.0+,比如:"
-            warn "     runpod/pytorch:2.10.0-py3.12-cuda13.0.0-cudnn-devel-ubuntu24.04"
-            warn "     nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04"
-            warn "  2) ALLOW_CUDA_MISMATCH=1 bash rebuild_env.sh 强制继续 (训练 99% 会失败)"
-            if [ "${ALLOW_CUDA_MISMATCH:-}" != "1" ]; then
-                err "中止以免浪费 20 分钟编译。设 ALLOW_CUDA_MISMATCH=1 跳过本检查"
-            fi
-        else
-            log "CUDA 版本 OK: driver 支持 CUDA ${CUDA_RUNTIME_VER}.x, Automodel 要 cu${REQUIRED_CUDA_MAJOR}0+"
+installed() { "$PY" -c "import $1" 2>/dev/null; }
+
+# ─── NVIDIA repo + CUDA forward-compat / toolkit 自动安装 ───
+# Automodel 的 pyproject.toml 把 torch 锁死在 cu130 index。RunPod 暂时没
+# 现成的 cu13 镜像,我们就自己装:
+#   - cuda-compat-13-0 (~30 MB): 让 cu12.x driver 跑 cu130 程序 — 每个 pod 都装
+#   - cuda-toolkit-13-0 (~4 GB): 提供 nvcc,编译 mamba/conv1d/TE 时需要 — 仅 rebuild
+
+ensure_nvidia_cuda_repo() {
+    if apt-cache policy 2>/dev/null | grep -q "developer.download.nvidia.com/compute/cuda"; then
+        return
+    fi
+    log "添加 NVIDIA CUDA apt repo..."
+    . /etc/os-release
+    local DISTRO="${ID}${VERSION_ID//./}"  # ubuntu2204 / ubuntu2404
+    local DEB_ARCH ARCH
+    DEB_ARCH=$(dpkg --print-architecture)
+    case "$DEB_ARCH" in
+        amd64) ARCH="x86_64" ;;
+        arm64) ARCH="sbsa" ;;
+        *) err "未支持的架构: $DEB_ARCH" ;;
+    esac
+    local URL="https://developer.download.nvidia.com/compute/cuda/repos/${DISTRO}/${ARCH}/cuda-keyring_1.1-1_all.deb"
+    wget -q "$URL" -O /tmp/cuda-keyring.deb \
+        || err "下载 cuda-keyring 失败 (distro=${DISTRO} arch=${ARCH})"
+    dpkg -i /tmp/cuda-keyring.deb >/dev/null
+    apt-get update -qq
+    rm -f /tmp/cuda-keyring.deb
+}
+
+ensure_cuda_compat() {
+    # 参数: major-minor 比如 "13-0"
+    local MM="$1"
+    local PKG="cuda-compat-${MM}"
+    if dpkg -s "$PKG" >/dev/null 2>&1; then
+        log "${PKG} 已装"
+    else
+        ensure_nvidia_cuda_repo
+        log "装 ${PKG} (~30 MB,让 driver 兼容 cu${MM/-/.})..."
+        apt-get install -y "$PKG" >/dev/null
+    fi
+    local DOT="${MM/-/.}"
+    local COMPAT_DIR="/usr/local/cuda-${DOT}/compat"
+    if [ -d "$COMPAT_DIR" ]; then
+        export LD_LIBRARY_PATH="${COMPAT_DIR}:${LD_LIBRARY_PATH:-}"
+        if ! grep -q "cuda-${DOT}/compat" ~/.bashrc 2>/dev/null; then
+            echo "export LD_LIBRARY_PATH=${COMPAT_DIR}:\$LD_LIBRARY_PATH" >> ~/.bashrc
         fi
     fi
-fi
+}
 
-installed() { "$PY" -c "import $1" 2>/dev/null; }
+ensure_cuda_toolkit() {
+    local MM="$1"
+    local DOT="${MM/-/.}"
+    if [ -x "/usr/local/cuda-${DOT}/bin/nvcc" ]; then
+        log "CUDA ${DOT} toolkit 已装"
+    else
+        ensure_nvidia_cuda_repo
+        log "装 cuda-toolkit-${MM} (~3-5 GB, ~10 min,首次)..."
+        apt-get install -y "cuda-toolkit-${MM}" >/dev/null
+    fi
+    export CUDA_HOME="/usr/local/cuda-${DOT}"
+    export PATH="${CUDA_HOME}/bin:${PATH}"
+    if ! grep -q "CUDA_HOME=/usr/local/cuda-${DOT}" ~/.bashrc 2>/dev/null; then
+        echo "export CUDA_HOME=/usr/local/cuda-${DOT}" >> ~/.bashrc
+        echo 'export PATH=$CUDA_HOME/bin:$PATH' >> ~/.bashrc
+    fi
+}
+
+# 检测并按需安装 CUDA 兼容层 + toolkit
+if command -v nvidia-smi >/dev/null 2>&1; then
+    CUDA_DRIVER_VER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1 | cut -d. -f1)
+    CUDA_RUNTIME_VER=$(nvidia-smi 2>/dev/null | grep -oP "CUDA Version: \K[0-9]+\.[0-9]+" | cut -d. -f1)
+    REQUIRED_CUDA_MAJOR=$(grep -oP "pytorch-cu\K[0-9]+" "${AUTOMODEL_ROOT}/pyproject.toml" | sort -u | tail -1 | cut -c1-2)
+    REQUIRED_MM="${REQUIRED_CUDA_MAJOR:0:2}-0"   # "13-0"
+
+    log "CUDA 状态:driver=${CUDA_DRIVER_VER} runtime=cu${CUDA_RUNTIME_VER:-?} 需要=cu${REQUIRED_CUDA_MAJOR}0"
+
+    if [ -n "${CUDA_RUNTIME_VER:-}" ] && [ "$CUDA_RUNTIME_VER" -lt "$REQUIRED_CUDA_MAJOR" ]; then
+        ensure_cuda_compat "$REQUIRED_MM"
+    elif [ -n "${CUDA_RUNTIME_VER:-}" ]; then
+        log "driver 已支持 cu${REQUIRED_CUDA_MAJOR}.x,不需要 compat"
+    fi
+
+    # --extra all / cuda / fa 会触发 native 编译,要 nvcc
+    case "${EXTRAS}" in
+        all|*cuda*|*fa*) ensure_cuda_toolkit "$REQUIRED_MM" ;;
+    esac
+fi
 
 # ─── HF helpers ───
 ensure_hf_cli() {

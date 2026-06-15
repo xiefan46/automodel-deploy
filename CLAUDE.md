@@ -112,24 +112,28 @@ tmux attach -t auto                # 看训练日志
 
 ## setup_env.sh
 
-两条路径(从 HF Hub 拉缓存):
+三步:
 
-1. **本地 `.venv` 已存在**(重入同一容器):验证后直接复用
-2. **本地不存在**:本地有 archive 就用,否则从 HF 下载 → 解压 → 链接
+1. **装 cuda-compat-13-0**(~30 MB,~1 min):cache 里的 venv 用 cu130 PyTorch,如果当前 pod driver 是 cu12.x 需要这个兼容层才能跑 GPU
+2. 拉 venv:本地有 archive 直接用,否则从 HF 下载 → 解压
+3. 验证 import 通
+
+不需要装 cuda-toolkit(没编译需求,wheel 都 ready)。
 
 如果 HF cache 损坏或不存在,会提示运行 `rebuild_env.sh`。
 
 ## rebuild_env.sh
 
-四步:
+五步:
 
-1. 安装 uv + 创建 venv(~30s)
-2. `uv sync --frozen --extra all` ~10-20 min(含 flash-attn / transformer-engine 源码编译)
-3. 打包压缩成 `tar.zst` ~2-3 min
-4. 推送到 HF Hub ~2-3 min
+1. **CUDA 13 自动装**:从 NVIDIA apt repo 装 `cuda-compat-13-0` + `cuda-toolkit-13-0`(如果 driver < cu13 或 `--extra all` 需要 nvcc 编译)~10 min 首次
+2. 安装 uv + 创建 venv(~30s)
+3. `uv sync --frozen --extra all` ~10-20 min(含 flash-attn / transformer-engine 源码编译)
+4. 打包压缩 **.venv** 成 `tar.zst` ~2-3 min(**不打包系统 CUDA**,系统包靠 apt 单独装)
+5. 推送到 HF Hub ~2-3 min
 
 `SKIP_HF_UPLOAD=1 bash rebuild_env.sh` 只构建本地不推送。
-`EXTRAS=` 跳过所有可选依赖,只装基础(快 5×,但功能少)。
+`EXTRAS=` 跳过所有可选依赖,只装基础(快 5×,但功能少,而且不会装 toolkit)。
 
 ## run_hello_world.sh
 
@@ -161,6 +165,8 @@ bash download_models.sh google/gemma-3-270m Qwen/Qwen3-0.6B
 - **venv 路径硬编码到缓存里**:缓存是用 `${AUTOMODEL_ROOT}/.venv` 路径打的包,restore 时必须放回同一路径(脚本里默认 `/root/Automodel`)
 - **HF token 共享**:`setup_env.sh` 里 login 一次,token 写入 `~/.cache/huggingface/token`,后续 `hf` / `huggingface-cli` 都直接用
 - **不假设有 DeepEP / UCCL-EP**:这两个需要 H100/H200 + 额外编译,不进默认 cache;需要的话激活 venv 后 `uv pip install deep-ep`
+- **系统 CUDA 不进缓存**:`cuda-compat-13-0` / `cuda-toolkit-13-0` 装在 `/usr/local/cuda-13.0/` 下,**每个新 pod 都重新 apt 装**,不打包到 HF cache。理由:(1) 各 pod 系统环境不一样不能直接搬,(2) apt 装 30 MB compat 包只要 1 min 不慢,(3) 缓存只放可移植的 venv 简单干净
+- **LD_LIBRARY_PATH 持久化**:脚本会写 `export LD_LIBRARY_PATH=/usr/local/cuda-13.0/compat:$LD_LIBRARY_PATH` 到 `~/.bashrc`,所有新 shell 自动加载
 
 ## 跟 verl-deploy 的差异
 
