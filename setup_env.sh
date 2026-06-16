@@ -179,7 +179,33 @@ else
     log "解压完成 (${SECONDS}s)"
 fi
 
-# 4. 验证
+# 4. 设 LD_LIBRARY_PATH:torch wheel 自带的 nvidia libs 优先(否则 TE / 等 .so 撞系统旧 cublasLt)
+TORCH_NVIDIA_LIBS=$("$PY" -c "
+import site, os
+nv_root = os.path.join(site.getsitepackages()[0], 'nvidia')
+if os.path.isdir(nv_root):
+    paths = [os.path.join(nv_root, d, 'lib') for d in sorted(os.listdir(nv_root))
+             if os.path.isdir(os.path.join(nv_root, d, 'lib'))]
+    print(':'.join(paths))
+" 2>/dev/null)
+if [ -n "$TORCH_NVIDIA_LIBS" ]; then
+    export LD_LIBRARY_PATH="${TORCH_NVIDIA_LIBS}:${LD_LIBRARY_PATH:-}"
+    log "已把 torch wheel nvidia libs 加到 LD_LIBRARY_PATH"
+    BASHRC_MARK="# automodel-deploy: torch nvidia libs"
+    if ! grep -qF "$BASHRC_MARK" ~/.bashrc 2>/dev/null; then
+        cat >> ~/.bashrc <<EOF
+
+${BASHRC_MARK}
+if [ -d "${VENV_DIR}" ]; then
+    _AM_NV_LIBS=\$(${PY} -c "import site,os; r=os.path.join(site.getsitepackages()[0],'nvidia'); print(':'.join(os.path.join(r,d,'lib') for d in sorted(os.listdir(r)) if os.path.isdir(os.path.join(r,d,'lib')))) if os.path.isdir(r) else ''" 2>/dev/null)
+    [ -n "\$_AM_NV_LIBS" ] && export LD_LIBRARY_PATH="\$_AM_NV_LIBS:\${LD_LIBRARY_PATH:-}"
+    unset _AM_NV_LIBS
+fi
+EOF
+    fi
+fi
+
+# 5. 验证
 log "验证环境..."
 "$PY" -c "
 import torch

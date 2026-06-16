@@ -239,6 +239,41 @@ fi
 log "    uv sync 完成 ($((SECONDS - SYNC_START))s)"
 
 # ──────────────────────────────────────────────────────────
+# [2a/4] 设置 LD_LIBRARY_PATH — 让 torch wheel 自带的 nvidia 库优先于系统旧版
+# ──────────────────────────────────────────────────────────
+# 不做这一步,TE 加载 libcublasLt.so.13 会撞到系统 /usr/local/cuda 的旧版,
+# 缺 cublasLtGroupedMatrixLayoutInit_internal 符号,直接 OSError 挂掉。
+TORCH_NVIDIA_LIBS=$("$PY" -c "
+import site, os
+nv_root = os.path.join(site.getsitepackages()[0], 'nvidia')
+if os.path.isdir(nv_root):
+    paths = []
+    for d in sorted(os.listdir(nv_root)):
+        lib = os.path.join(nv_root, d, 'lib')
+        if os.path.isdir(lib):
+            paths.append(lib)
+    print(':'.join(paths))
+" 2>/dev/null)
+
+if [ -n "$TORCH_NVIDIA_LIBS" ]; then
+    export LD_LIBRARY_PATH="${TORCH_NVIDIA_LIBS}:${LD_LIBRARY_PATH:-}"
+    log "已把 torch wheel nvidia libs 加到 LD_LIBRARY_PATH"
+    # 持久化(用 venv 内 nvidia 路径,而不是硬编码具体目录)
+    BASHRC_MARK="# automodel-deploy: torch nvidia libs"
+    if ! grep -qF "$BASHRC_MARK" ~/.bashrc 2>/dev/null; then
+        cat >> ~/.bashrc <<EOF
+
+${BASHRC_MARK}
+if [ -d "${VENV_DIR}" ]; then
+    _AM_NV_LIBS=\$(${PY} -c "import site,os; r=os.path.join(site.getsitepackages()[0],'nvidia'); print(':'.join(os.path.join(r,d,'lib') for d in sorted(os.listdir(r)) if os.path.isdir(os.path.join(r,d,'lib')))) if os.path.isdir(r) else ''" 2>/dev/null)
+    [ -n "\$_AM_NV_LIBS" ] && export LD_LIBRARY_PATH="\$_AM_NV_LIBS:\${LD_LIBRARY_PATH:-}"
+    unset _AM_NV_LIBS
+fi
+EOF
+    fi
+fi
+
+# ──────────────────────────────────────────────────────────
 # [2/4] 验证
 # ──────────────────────────────────────────────────────────
 log "[2/4] 验证..."
@@ -248,11 +283,11 @@ assert torch.cuda.is_available(), 'CUDA 不可用!'
 print(f'CUDA: {torch.version.cuda}, GPU: {torch.cuda.get_device_name(0)}')
 import nemo_automodel; print(f'nemo_automodel: OK ({nemo_automodel.__file__})')
 import transformers; print(f'transformers: {transformers.__version__}')
-# 可选:这些 import 失败不致命,只警告
+# 可选:这些 import 失败不致命,只警告(捕 OSError 防 .so 符号缺失)
 try: import flash_attn; print(f'flash_attn: {flash_attn.__version__}')
-except ImportError: print('flash_attn: NOT installed (可选)')
+except (ImportError, OSError) as e: print(f'flash_attn: NOT working ({type(e).__name__})')
 try: import transformer_engine; print(f'transformer_engine: {transformer_engine.__version__}')
-except ImportError: print('transformer_engine: NOT installed (可选)')
+except (ImportError, OSError) as e: print(f'transformer_engine: NOT working ({type(e).__name__})')
 print('\n=== 验证通过 ===')
 "
 
